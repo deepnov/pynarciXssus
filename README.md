@@ -1,6 +1,6 @@
 # PyNarcissus for XSS detection
 
-PyNarcissus is a standard Javascript parser. Here it is customized to perform some XSS taint detection.
+PyNarcissus is a standard Javascript parser created by JT Olds in Python. Here it is customized to perform some XSS taint detection. The Original Narcissus parser was written in Javascript by Brendan Eich (Javascript creator). This fork maintains the same structure and approach used in Narcissus, except adding few methods and variables to track taint propagation for any Cross Site Scripting scenario.
 
 The below cases will be covered:
 
