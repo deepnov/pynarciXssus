@@ -1,4 +1,4 @@
-# PyNarciXssus for XSS detection
+# PyNarcissus for XSS detection
 
 PyNarcissus is a standard Javascript parser. Here it is customized to perform some XSS taint detection.
 
