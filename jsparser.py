@@ -201,6 +201,7 @@ class Tokenizer(object):
         self.filename = f
         self.lineno = l
 
+
     input_ = property(lambda self: self.source[self.cursor:])
     done = property(lambda self: self.peek() == END)
     token = property(lambda self: self.tokens.get(self.tokenIndex))
@@ -262,7 +263,6 @@ class Tokenizer(object):
             newlines = re.findall(r'\n', comment)
             if newlines:
                 self.lineno += len(newlines)
-
         self.tokenIndex = (self.tokenIndex + 1) & 3
         token = self.tokens.get(self.tokenIndex)
         if not token:
@@ -363,6 +363,7 @@ class CompilerContext(object):
         self.inTaintedFn=False
         self.paramVarDecls=[]
 
+    #Added by deepnov
     def checkVarDecl(self, vname):
         for attr in self.varDecls:
             if attr.name==vname:
@@ -726,12 +727,12 @@ def Statement(t, x):
             if n.value.type=="IDENTIFIER":
                 returnVar=n.value
                 if x.checkVarTainted(returnVar.value):
-                    msg = " [XSS] Tainted variable %s  at index %s, %s - Please Fix" % (returnVar.value,returnVar.start, returnVar.end)
+                    msg = " [XSS] Tainted variable %s  [Lineno:%s] - Please Fix" % (returnVar.value,t.lineno)
                     x.inTaintedFn=True
             else:
                 match = re.search(XSSSOURCEREGEXP,n.value.getSource(),re.DOTALL)
                 if match:
-                    msg = " [XSS] %s  at Function return index %s, %s - Please Fix" % (match.group(0),n.value.start+match.start(), n.value.start+match.end())
+                    msg = " [XSS] %s  at Function return [Lineno:%s] - Please Fix" % (match.group(0),t.lineno)
                     x.inTaintedFn=True
 
                 else:
@@ -813,22 +814,22 @@ def Statement(t, x):
                      fnNode=rhs[0]
                      if fnNode.type== "FUNCTION" and fnNode.tainted and x.inFunction==False:
                         varID.tainted=True
-                        msg=" [XSS] Tainted new function assigned at index %s, %s " % (fnNode.start,fnNode.end)
+                        msg=" [XSS] Tainted new function assigned [Lineno:%s] " % (t.lineno)
 
                 if rhs.type not in ["FUNCTION","NEW","CALL","GROUP"]:
                     match = re.search(XSSSOURCEREGEXP,rhs.getSource(),re.DOTALL)
                     if match:
-                        msg = " [XSS] %s  at ASSIGN index %s, %s" % (match.group(0),rhs.start+match.start(), rhs.start+match.end())
+                        msg = " [XSS] %s  at ASSIGN [Lineno:%s]" % (match.group(0),t.lineno)
                 elif rhs.type=="FUNCTION":
                     fnNode=rhs
                     if fnNode.tainted==True:
                         varID.tainted=True
-                        msg=" [XSS] Tainted anonymous %s assigned at index %s, %s " % (fnNode.value,fnNode.start,fnNode.end)
+                        msg=" [XSS] Tainted anonymous %s assigned [Lineno:%s] " % (fnNode.value,t.lineno)
                 elif rhs.type=="GROUP":
                      inside=rhs[0]
                      if inside.type=="FUNCTION" and inside.tainted:
                          varID.tainted=True
-                         msg=" [XSS] Tainted anonymous function inside group operator assigned at index %s, %s " % (inside.start,inside.end)
+                         msg=" [XSS] Tainted anonymous function inside group operator assigned [Lineno:%s] " % (t.lineno)
 
                 if lhs.type=="IDENTIFIER" and x.checkVarDecl(lhs.value)==False and x.checkparamVarDecl(lhs.value)==False and msg!="":
                     varID.tainted=True
@@ -852,12 +853,12 @@ def Statement(t, x):
                     callparamnode=node[1][0]
                     if callparamnode.type=="IDENTIFIER":
                        if x.checkVarTainted(callparamnode.value):
-                          msg=" [XSS] Tainted variable %s assigned at CALL index %s, %s " % (callparamnode.value,callparamnode.start,callparamnode.end)
+                          msg=" [XSS] Tainted variable %s assigned at CALL [Lineno:%s] " % (callparamnode.value,t.lineno)
                           print "Function CALL parameter:"+msg+" - Please Fix"
                     else:
                         match = re.search(XSSSOURCEREGEXP,callparam,re.DOTALL)
                         if match:
-                           msg = " [XSS] %s  at CALL index %s, %s" % (match.group(0),node.start+match.start(), node.start+match.end())
+                           msg = " [XSS] %s  at CALL [Lineno:%s] " % (match.group(0),t.lineno)
                            print "Function CALL parameter:"+msg+" - Please Fix"
 
             if n.expression.type!="COMMA":
@@ -934,7 +935,7 @@ def Variables(t, x):
             if n2.initializer.type not in ["FUNCTION","NEW","CALL","GROUP"]:
                 match = re.search(XSSSOURCEREGEXP,n2.initializer.getSource(),re.DOTALL)
                 if match:
-                    msg = " [XSS] %s  at Var init index %s, %s" % (match.group(0),n2.start+match.start()+len(n2.value)+1, n2.start+match.end()+len(n2.value)+1)
+                    msg = " [XSS] %s  at Var init [Lineno:%s]" % (match.group(0),t.lineno)
                     if x.inFunction:
                         n2.tainted=True
                 else:
@@ -948,28 +949,28 @@ def Variables(t, x):
                     if fnNode[0].type=="FUNCTION":
                         if fnNode[0].tainted:
                             n2.tainted=True
-                            fmsg=" [XSS] Tainted IIFE assigned at index %s, %s " % (fnNode.start,fnNode.end)
+                            fmsg=" [XSS] Tainted IIFE assigned [Lineno:%s] " % (t.lineno)
                 elif x.checkFunctionTainted(fnNode.value):
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted function %s assigned at index %s, %s " % (fnNode.value,fnNode.start,fnNode.end)
+                    fmsg=" [XSS] Tainted function %s assigned [Lineno:%s] " % (fnNode.value,t.lineno)
             elif rhs.type=="IDENTIFIER":
                 if x.checkVarTainted(rhs.value):
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted variable %s assigned at index %s, %s " % (rhs.value,rhs.start,rhs.end)
+                    fmsg=" [XSS] Tainted variable %s assigned [Lineno:%s] " % (rhs.value,t.lineno)
             elif rhs.type=="NEW":
                 fnNode=rhs[0]
                 if fnNode.type== "FUNCTION" and fnNode.tainted and fnNode.value=="function":
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted new function %s assigned at index %s, %s " % (fnNode.value,fnNode.start,fnNode.end)
+                    fmsg=" [XSS] Tainted new function %s assigned [Lineno:%s] " % (fnNode.value,t.lineno)
             elif rhs.type=="FUNCTION":
                 if rhs.tainted==True:
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted anonymous %s assigned at index %s, %s " % (rhs.value,rhs.start,rhs.end)
+                    fmsg=" [XSS] Tainted anonymous %s assigned [Lineno:%s] " % (rhs.value,t.lineno)
             elif rhs.type=="GROUP":
                 inside=rhs[0]
                 if inside.type=="FUNCTION" and inside.tainted:
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted anonymous function inside group operator assigned at index %s, %s " % (rhs.start,rhs.end)
+                    fmsg=" [XSS] Tainted anonymous function inside group operator assigned [Lineno:%s] " % (t.lineno)
         n2.readOnly = not not (n.type_ == CONST)
         n.append(n2)
         x.varDecls.append(n2)
@@ -1355,4 +1356,4 @@ if __name__ == "__main__":
 
     #todo: CALL propagation-regex target-check global scope, handling encoding methods, newline adjustment
     #version 2; support => function
-    parse("var t = document.URL;")
+    parse("var t = document.cookie; \n var x=\n document.URL")
