@@ -1,13 +1,12 @@
 # PyXSSParser for XSS detection
 
-PyNarcissus is a standard Javascript parser created by JT Olds in Python. Here it is customized to perform some XSS taint detection. The Original Narcissus parser was written in Javascript by Brendan Eich (Javascript creator). This fork maintains the same structure and approach used in Narcissus, except adding few methods and variables to track taint propagation for any Cross Site Scripting scenario.
+This parser attaches few methods and variables to the existing JS Parser to trace any data flow from XSS source property or function to any variable or function with global access.
 
-The below cases will be covered:
+To summarize, the parser detects the below cases
 
-a]XSS source assigned to a global variable
+A. XSS source assigned to a global variable or global property
+B. XSS source assigned to a function return value (exit point)
+C. XSS source passed to a function (entry point)
 
-b]XSS source assigned to a function return value
 
-c]XSS source passed to XSS sink function
 
-d]XSS source assigned to XSS sink within function

@@ -38,21 +38,18 @@
 # ***** END LICENSE BLOCK ***** */
 
 """
- PyNarcissus
+ PyXSSParser - An XSS detector (forked from PyNarcissus - A lexical scanner and parser. JS implemented in JS, ported to Python.)
 
- A lexical scanner and parser. JS implemented in JS, ported to Python.
 """
 
-__author__ = "JT Olds"
-__author_email__ = "jtolds@xnet5.com"
-__date__ = "2009-03-24"
-__all__ = ["ParseError", "parse", "tokens"]
-
 import re, sys, types
-
 class Object: pass
 class Error_(Exception): pass
 class ParseError(Error_): pass
+
+#Added by deepnov
+XSSSOURCEREGEXP="((document[.](cookie|referrer|URL|documentURI|URLUnencoded|baseURI))|(location([;]|\s)(?![.])|location[.](href|search|hash|pathname))|window.name)(?!([.](length|indexOf))|[=])"
+
 
 tokens = dict(enumerate((
         # End of source.
@@ -191,6 +188,7 @@ class SyntaxError_(ParseError):
         ParseError.__init__(self, "Syntax error: %s\n%s:%s" %
                 (message, filename, lineno))
 
+
 class Tokenizer(object):
     def __init__(self, s, f, l):
         self.cursor = 0
@@ -277,6 +275,7 @@ class Tokenizer(object):
 
         def matchInput():
             match = fpRegExp.match(input__)
+
             if match:
                 token.type_ = NUMBER
                 token.value = float(match.group(0))
@@ -359,6 +358,38 @@ class CompilerContext(object):
         self.ecmaStrictMode = False
         self.inForLoopInit = False
 
+        #Added by deepnov
+        self.functionLevel=0
+        self.inTaintedFn=False
+        self.paramVarDecls=[]
+
+    def checkVarDecl(self, vname):
+        for attr in self.varDecls:
+            if attr.name==vname:
+                return True
+        return False
+
+    #Added by deepnov
+    def checkparamVarDecl(self, vname):
+        for attr in self.paramVarDecls:
+            if attr==vname:
+                return True
+        return False
+
+    #Added by deepnov
+    def checkVarTainted(self, vname):
+        for attr in self.varDecls:
+            if attr.name==vname and attr.tainted == True:
+                return True
+        return False
+
+    #Added by deepnov
+    def checkFunctionTainted(self,fname):
+        for attr in self.funDecls:
+            if attr.name==fname and attr.tainted == True:
+                return True
+        return False
+
 def Script(t, x):
     n = Statements(t, x)
     n.type_ = SCRIPT
@@ -381,9 +412,14 @@ class Node(list):
             self.lineno = token.lineno
             self.start = token.start
             self.end = token.end
+
+            #Added by deepnov
+            if self.type_==IDENTIFIER or self.type_==FUNCTION:
+                self.tainted=False
         else:
             self.type_ = type_
             self.lineno = t.lineno
+
         self.tokenizer = t
 
         for arg in args:
@@ -398,6 +434,7 @@ class Node(list):
                 self.start = kid.start
             if hasattr(self, "end") and self.end < kid.end:
                 self.end = kid.end
+
         return list.append(self, kid)
 
     indentLevel = 0
@@ -449,6 +486,7 @@ class Node(list):
             return self.tokenizer.source[:self.end]
         return self.tokenizer.source[:]
 
+
     filename = property(lambda self: self.tokenizer.filename)
 
     def __nonzero__(self): return True
@@ -495,6 +533,7 @@ def Statement(t, x):
             type_ = STATEMENT_FORM
         else:
             type_ = DECLARED_FORM
+
         return FunctionDefinition(t, x, True, type_)
 
     elif tt == LEFT_CURLY:
@@ -677,9 +716,28 @@ def Statement(t, x):
         if not x.inFunction:
             raise t.newSyntaxError("Invalid return")
         n = Node(t)
+
         tt = t.peekOnSameLine()
         if tt not in (END, NEWLINE, SEMICOLON, RIGHT_CURLY):
             n.value = Expression(t, x)
+
+            #Added by deepnov
+            msg=""
+            if n.value.type=="IDENTIFIER":
+                returnVar=n.value
+                if x.checkVarTainted(returnVar.value):
+                    msg = " [XSS] Tainted variable %s  at index %s, %s - Please Fix" % (returnVar.value,returnVar.start, returnVar.end)
+                    x.inTaintedFn=True
+            else:
+                match = re.search(XSSSOURCEREGEXP,n.value.getSource(),re.DOTALL)
+                if match:
+                    msg = " [XSS] %s  at Function return index %s, %s - Please Fix" % (match.group(0),n.value.start+match.start(), n.value.start+match.end())
+                    x.inTaintedFn=True
+
+                else:
+                    msg=""
+            if msg!="" and x.functionLevel<=1:
+                print "Function Return value:"+n.value.getSource()+msg
 
     elif tt == WITH:
         n = Node(t)
@@ -699,6 +757,7 @@ def Statement(t, x):
         return n
 
     else:
+
         if tt == IDENTIFIER:
             t.scanOperand = False
             tt = t.peek()
@@ -721,6 +780,89 @@ def Statement(t, x):
         t.unget()
         n.expression = Expression(t, x)
         n.end = n.expression.end
+
+        #Added by deepnov
+        for exp in n.expression:
+            msg=""
+            if n.expression.type=="COMMA":
+                varID= exp[0]
+                node=exp
+            else:
+                node=n.expression
+                varID=node[0]
+
+
+            if node.type=="ASSIGN": #n.expression contains assign statement
+                #check RHS tainted functions
+                fmsg=""
+                rhs=node[1]
+                lhs=node[0]
+
+                if rhs.type=="CALL":
+                    fnNode=rhs[0]
+                    if fnNode.type=="GROUP":
+                        if fnNode[0].type=="FUNCTION":
+                            if fnNode[0].tainted:
+                                varID.tainted=True
+                    elif x.checkFunctionTainted(fnNode.value):
+                        varID.tainted=True
+                elif rhs.type=="IDENTIFIER":
+                    if x.checkVarTainted(rhs.value):
+                        varID.tainted=True
+                elif rhs.type=="NEW":
+                     fnNode=rhs[0]
+                     if fnNode.type== "FUNCTION" and fnNode.tainted and x.inFunction==False:
+                        varID.tainted=True
+                        msg=" [XSS] Tainted new function assigned at index %s, %s " % (fnNode.start,fnNode.end)
+
+                if rhs.type not in ["FUNCTION","NEW","CALL","GROUP"]:
+                    match = re.search(XSSSOURCEREGEXP,rhs.getSource(),re.DOTALL)
+                    if match:
+                        msg = " [XSS] %s  at ASSIGN index %s, %s" % (match.group(0),rhs.start+match.start(), rhs.start+match.end())
+                elif rhs.type=="FUNCTION":
+                    fnNode=rhs
+                    if fnNode.tainted==True:
+                        varID.tainted=True
+                        msg=" [XSS] Tainted anonymous %s assigned at index %s, %s " % (fnNode.value,fnNode.start,fnNode.end)
+                elif rhs.type=="GROUP":
+                     inside=rhs[0]
+                     if inside.type=="FUNCTION" and inside.tainted:
+                         varID.tainted=True
+                         msg=" [XSS] Tainted anonymous function inside group operator assigned at index %s, %s " % (inside.start,inside.end)
+
+                if lhs.type=="IDENTIFIER" and x.checkVarDecl(lhs.value)==False and x.checkparamVarDecl(lhs.value)==False and msg!="":
+                    varID.tainted=True
+                    print "Undeclared variable (global): ["+lhs.value+"] "+msg+" - Please Fix"
+                elif n.value=="this" and x.inFunction and msg!="":
+                    x.inTaintedFn=True
+                elif lhs.type=="DOT" and lhs.getSource().startswith("this.")==False and msg!="":
+                    match_lhs = re.search(".location|.innerHTML|.outerHTML|.value|.href",lhs.getSource(),re.DOTALL)
+                    if match_lhs:
+                        print "Property value (global): ["+lhs.value+"] "+msg+" - Please Fix"
+                elif lhs.type=="DOT" and lhs.getSource().startswith("this.") and msg!="" and x.inFunction==False:
+                    print "Property value (global): ["+lhs.getSource()+"] "+msg+" - Please Fix"
+
+            elif node.type=="CALL": #n.expression contains call statement
+                callparam=""
+
+                if len(node)>1 and node[1]:
+                   if len(node[1])>0 and node[1][0]:
+                      callparam=node[1][0].getSource()
+                if callparam!="":
+                    callparamnode=node[1][0]
+                    if callparamnode.type=="IDENTIFIER":
+                       if x.checkVarTainted(callparamnode.value):
+                          msg=" [XSS] Tainted variable %s assigned at CALL index %s, %s " % (callparamnode.value,callparamnode.start,callparamnode.end)
+                          print "Function CALL parameter:"+msg+" - Please Fix"
+                    else:
+                        match = re.search(XSSSOURCEREGEXP,callparam,re.DOTALL)
+                        if match:
+                           msg = " [XSS] %s  at CALL index %s, %s" % (match.group(0),node.start+match.start(), node.start+match.end())
+                           print "Function CALL parameter:"+msg+" - Please Fix"
+
+            if n.expression.type!="COMMA":
+                break
+            #Edit by deepnov ends
 
     if t.lineno == t.token.lineno:
         tt = t.peekOnSameLine()
@@ -752,11 +894,22 @@ def FunctionDefinition(t, x, requireName, functionForm):
         if t.peek() != RIGHT_PAREN:
             t.mustMatch(COMMA)
 
+
     t.mustMatch(LEFT_CURLY)
     x2 = CompilerContext(True)
+
+    #Added by deepnov
+    x2.paramVarDecls=f.params
+    if functionForm == DECLARED_FORM:
+       x2.functionLevel=x2.functionLevel+1
+
     f.body = Script(t, x2)
     t.mustMatch(RIGHT_CURLY)
     f.end = t.token.end
+
+    #Added by deepnov
+    if x2.inTaintedFn:
+        f.tainted=True
 
     f.functionForm = functionForm
     if functionForm == DECLARED_FORM:
@@ -765,6 +918,8 @@ def FunctionDefinition(t, x, requireName, functionForm):
 
 def Variables(t, x):
     n = Node(t)
+    msg=""
+    fmsg=""
     while True:
         t.mustMatch(IDENTIFIER)
         n2 = Node(t)
@@ -773,10 +928,61 @@ def Variables(t, x):
             if t.token.assignOp:
                 raise t.newSyntaxError("Invalid variable initialization")
             n2.initializer = Expression(t, x, COMMA)
+
+            #Added by deepnov
+            n2.end=n2.initializer.end
+            if n2.initializer.type not in ["FUNCTION","NEW","CALL","GROUP"]:
+                match = re.search(XSSSOURCEREGEXP,n2.initializer.getSource(),re.DOTALL)
+                if match:
+                    msg = " [XSS] %s  at Var init index %s, %s" % (match.group(0),n2.start+match.start()+len(n2.value)+1, n2.start+match.end()+len(n2.value)+1)
+                    if x.inFunction:
+                        n2.tainted=True
+                else:
+                    msg=""
+
+            #check RHS tainted functions
+            rhs=n2.initializer
+            if rhs.type=="CALL" :
+                fnNode=rhs[0]
+                if fnNode.type=="GROUP":
+                    if fnNode[0].type=="FUNCTION":
+                        if fnNode[0].tainted:
+                            n2.tainted=True
+                            fmsg=" [XSS] Tainted IIFE assigned at index %s, %s " % (fnNode.start,fnNode.end)
+                elif x.checkFunctionTainted(fnNode.value):
+                    n2.tainted=True
+                    fmsg=" [XSS] Tainted function %s assigned at index %s, %s " % (fnNode.value,fnNode.start,fnNode.end)
+            elif rhs.type=="IDENTIFIER":
+                if x.checkVarTainted(rhs.value):
+                    n2.tainted=True
+                    fmsg=" [XSS] Tainted variable %s assigned at index %s, %s " % (rhs.value,rhs.start,rhs.end)
+            elif rhs.type=="NEW":
+                fnNode=rhs[0]
+                if fnNode.type== "FUNCTION" and fnNode.tainted and fnNode.value=="function":
+                    n2.tainted=True
+                    fmsg=" [XSS] Tainted new function %s assigned at index %s, %s " % (fnNode.value,fnNode.start,fnNode.end)
+            elif rhs.type=="FUNCTION":
+                if rhs.tainted==True:
+                    n2.tainted=True
+                    fmsg=" [XSS] Tainted anonymous %s assigned at index %s, %s " % (rhs.value,rhs.start,rhs.end)
+            elif rhs.type=="GROUP":
+                inside=rhs[0]
+                if inside.type=="FUNCTION" and inside.tainted:
+                    n2.tainted=True
+                    fmsg=" [XSS] Tainted anonymous function inside group operator assigned at index %s, %s " % (rhs.start,rhs.end)
         n2.readOnly = not not (n.type_ == CONST)
         n.append(n2)
         x.varDecls.append(n2)
+
+        if not x.inFunction:
+            if msg!="":
+                print "global variable init:"+n2.value+msg+" - Please Fix"
+            elif fmsg!="":
+                print "global variable init:"+n2.value+fmsg+" - Please Fix"
+        #Edit by deepnov ends
+
         if not t.match(COMMA): break
+
     return n
 
 def ParenExpression(t, x):
@@ -1135,12 +1341,18 @@ def parse(source, filename=None, starting_line_number=1):
     Raises:
         ParseError
     """
-    t = Tokenizer(source, filename, starting_line_number)
+    t = Tokenizer(source, filename, starting_line_number) #tokenizer
     x = CompilerContext(False)
     n = Script(t, x)
+
     if not t.done:
         raise t.newSyntaxError("Syntax error")
     return n
 
+
+
 if __name__ == "__main__":
-    print str(parse(file(sys.argv[1]).read(),sys.argv[1]))
+
+    #todo: CALL propagation-regex target-check global scope, handling encoding methods, newline adjustment
+    #version 2; support => function
+    parse("var t = document.URL;")

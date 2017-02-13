@@ -15,10 +15,11 @@ def main(argv):
     failures = 0
 
     for testfile in testfiles:
-        py_proc = subprocess.Popen(["./parse_mjsunit.py", testfile],
-                stdout=subprocess.PIPE)
-        js_proc = subprocess.Popen(["./parse_mjsunit.js", testfile],
-                stdout=subprocess.PIPE)
+        print testfile
+        py_proc = subprocess.Popen(["~/picky/code/pyxssparser/tests/mjsunit/parse_mjsunit.py", testfile],
+                stdout=subprocess.PIPE,shell=True)
+        js_proc = subprocess.Popen(["~/picky/code/pyxssparser/tests/mjsunit/parse_mjsunit.js", testfile],
+                stdout=subprocess.PIPE,shell=True)
 
         failed = False
 
