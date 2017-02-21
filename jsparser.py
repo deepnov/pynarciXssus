@@ -48,7 +48,7 @@ class Error_(Exception): pass
 class ParseError(Error_): pass
 
 #Added by deepnov
-XSSSOURCEREGEXP="((document[.](cookie|referrer|URL|documentURI|URLUnencoded|baseURI))|(location([;]|\s)(?![.])|location[.](href|search|hash|pathname))|window.name)(?!([.](length|indexOf))|[=])"
+XSSSOURCEREGEXP="^(?!(.*encodeURIComponent)).*((document[.](cookie|referrer|URL|documentURI|URLUnencoded|baseURI))|(location([;]|\s)(?![.])|location[.](href|search|hash|pathname))|window.name)(?!([.](length|indexOf))|[=])"
 
 
 tokens = dict(enumerate((
@@ -328,7 +328,7 @@ class Tokenizer(object):
                 if match:
                     token.type_ = NEWLINE
                     return match.group(0)
-
+            print "%s [LineNo:%s]"%(input__[0:self.cursor],self.lineno)
             raise self.newSyntaxError("Illegal token")
 
         token.start = self.cursor
@@ -732,13 +732,13 @@ def Statement(t, x):
             else:
                 match = re.search(XSSSOURCEREGEXP,n.value.getSource(),re.DOTALL)
                 if match:
-                    msg = " [XSS] %s  at Function return [Lineno:%s] - Please Fix" % (match.group(0),t.lineno)
+                    msg = " [XSS] %s [Lineno:%s] - Please Fix" % (match.group(0),t.lineno)
                     x.inTaintedFn=True
 
                 else:
                     msg=""
             if msg!="" and x.functionLevel<=1:
-                print "Function Return value:"+n.value.getSource()+msg
+                print "Function Return value:"+msg
 
     elif tt == WITH:
         n = Node(t)
@@ -868,6 +868,7 @@ def Statement(t, x):
     if t.lineno == t.token.lineno:
         tt = t.peekOnSameLine()
         if tt not in (END, NEWLINE, SEMICOLON, RIGHT_CURLY):
+            print "%s [LineNo:%s]"%(t.source[0:t.cursor],t.lineno)
             raise t.newSyntaxError("Missing ; before statement")
     t.match(SEMICOLON)
     return n
@@ -949,14 +950,14 @@ def Variables(t, x):
                     if fnNode[0].type=="FUNCTION":
                         if fnNode[0].tainted:
                             n2.tainted=True
-                            fmsg=" [XSS] Tainted IIFE assigned [Lineno:%s] " % (t.lineno)
+                            #fmsg=" [XSS] Tainted IIFE assigned [Lineno:%s] " % (t.lineno)
                 elif x.checkFunctionTainted(fnNode.value):
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted function %s assigned [Lineno:%s] " % (fnNode.value,t.lineno)
+                    #fmsg=" [XSS] Tainted function %s assigned [Lineno:%s] " % (fnNode.value,t.lineno)
             elif rhs.type=="IDENTIFIER":
                 if x.checkVarTainted(rhs.value):
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted variable %s assigned [Lineno:%s] " % (rhs.value,t.lineno)
+                    #fmsg=" [XSS] Tainted variable %s assigned [Lineno:%s] " % (rhs.value,t.lineno)
             elif rhs.type=="NEW":
                 fnNode=rhs[0]
                 if fnNode.type== "FUNCTION" and fnNode.tainted and fnNode.value=="function":
@@ -965,12 +966,12 @@ def Variables(t, x):
             elif rhs.type=="FUNCTION":
                 if rhs.tainted==True:
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted anonymous %s assigned [Lineno:%s] " % (rhs.value,t.lineno)
+                    #fmsg=" [XSS] Tainted anonymous %s assigned [Lineno:%s] " % (rhs.value,t.lineno)
             elif rhs.type=="GROUP":
                 inside=rhs[0]
                 if inside.type=="FUNCTION" and inside.tainted:
                     n2.tainted=True
-                    fmsg=" [XSS] Tainted anonymous function inside group operator assigned [Lineno:%s] " % (t.lineno)
+                    #fmsg=" [XSS] Tainted anonymous function inside group operator assigned [Lineno:%s] " % (t.lineno)
         n2.readOnly = not not (n.type_ == CONST)
         n.append(n2)
         x.varDecls.append(n2)
@@ -1230,7 +1231,7 @@ def Expression(t, x, stop=None):
                                 n.append(FunctionDefinition(t, x, True,
                                         EXPRESSED_FORM))
                             else:
-                                if tt in (IDENTIFIER, NUMBER, STRING):
+                                if tt in (IDENTIFIER, NUMBER, STRING) or tt >=60 or tt==0:
                                     id_ = Node(t)
                                 elif tt == RIGHT_CURLY:
                                     if x.ecmaStrictMode:
@@ -1238,6 +1239,7 @@ def Expression(t, x, stop=None):
                                                 "trailing ,")
                                     raise BreakOutOfObjectInit
                                 else:
+                                    print "%s [%s][LineNo:%s]"%(t.source[n.start:t.cursor],tt,t.lineno)
                                     raise t.newSyntaxError("Invalid property "
                                             "name")
                                 t.mustMatch(COLON)
@@ -1354,6 +1356,4 @@ def parse(source, filename=None, starting_line_number=1):
 
 if __name__ == "__main__":
 
-    #todo: CALL propagation-regex target-check global scope, handling encoding methods, newline adjustment
-    #version 2; support => function
     parse("var t = document.cookie; \n var x=\n document.URL")
